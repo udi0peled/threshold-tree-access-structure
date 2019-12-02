@@ -20,7 +20,15 @@ typedef enum
     THRESHOLD_TREE_OUT_OF_MEMORY         = -4,
 } threshold_tree_status;
 
-threshold_tree_ctx_t *threshold_tree_ctx_new();
+typedef struct threshold_tree_node_path threshold_tree_node_path_t;
+
+typedef struct threshold_tree_node_path
+{
+    uint8_t *path;
+    uint8_t length;
+};
+
+threshold_tree_ctx_t *threshold_tree_ctx_new(uint8_t num_shares, uint8_t threshold, uint64_t *ids);
 void threshold_tree_ctx_free(threshold_tree_ctx_t *tree_ctx);
 
 #ifdef __cplusplus
