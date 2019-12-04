@@ -13,22 +13,24 @@ typedef struct threshold_tree_ctx threshold_tree_ctx_t;
 
 typedef enum
 {
-    THRESHOLD_TREE_SUCCESS               =  0,
-    THRESHOLD_TREE_UNKNOWN_ERROR         = -1,
-    THRESHOLD_TREE_INVALID_PARAMETER     = -2,
-    THRESHOLD_TREE_INSUFFICIENT_BUFFER   = -3,
-    THRESHOLD_TREE_OUT_OF_MEMORY         = -4,
+    THRESHOLD_TREE_SUCCESS                  =  0,
+    THRESHOLD_TREE_UNKNOWN_ERROR            = -1,
+    THRESHOLD_TREE_INVALID_PATH             = -2,
+    THRESHOLD_TREE_INVALID_THRESHOLD        = -3,
+    THRESHOLD_TREE_INSUFFICIENT_BUFFER      = -4,
+    THRESHOLD_TREE_OUT_OF_MEMORY            = -5,
+    THRESHOLD_TREE_MISSING_ID               = -6,
+    THRESHOLD_TREE_INVALID_ID               = -7,
+    THRESHOLD_TREE_INVALID_CTX              = -8,
+    THRESHOLD_TREE_NULL_POINTER             = -9,
+    THRESHOLD_TREE_INCOMPLETE_STRUCTURE     = -10,
+    THRESHOLD_TREE_INVALID_PARAMETER        = -11,
+    THRESHOLD_TREE_SHARING_INVALID_INDEX    = -12,
+    THRESHOLD_TREE_SHARING_INVALID_SECRET   = -13,
+    THRESHOLD_TREE_SHARING_INVALID_SHARE    = -14,
 } threshold_tree_status;
 
-typedef struct threshold_tree_node_path threshold_tree_node_path_t;
-
-typedef struct threshold_tree_node_path
-{
-    uint8_t *path;
-    uint8_t length;
-};
-
-threshold_tree_ctx_t *threshold_tree_ctx_new(uint8_t num_shares, uint8_t threshold, uint64_t *ids);
+threshold_tree_ctx_t *threshold_tree_ctx_new();
 void threshold_tree_ctx_free(threshold_tree_ctx_t *tree_ctx);
 
 #ifdef __cplusplus
