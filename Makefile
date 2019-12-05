@@ -1,7 +1,7 @@
 Test_Name := test
 Play_Name := playground
 
-App_C_Flags := -g -O0 -Wall -Wextra -I.
+App_C_Flags := -g -O0 -Wall -Wextra -Wvla -I.
 App_Cpp_Flags := $(App_C_Flags) -std=c++14
 App_Link_Flags := -lcrypto
 

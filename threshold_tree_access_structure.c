@@ -19,7 +19,8 @@ struct threshold_tree_node
     secp256k1_point_t *group_polynom_coeffs;
 
     secp256k1_scalar_t lagrange_coeff;
-    uint8_t is_authorized_subtree;
+    uint8_t is_authorized_node;
+    uint8_t num_authorized_children;
 
     threshold_tree_node_t **children;
     threshold_tree_node_t *parent;
@@ -79,7 +80,8 @@ static void threshold_tree_free_subtree_impl(threshold_tree_node_t *subtree_root
         memset(subtree_root->group_share, 0, sizeof(secp256k1_point_t));
 
         memset(subtree_root->lagrange_coeff, 0, sizeof(secp256k1_scalar_t));
-        subtree_root->is_authorized_subtree = 0;
+        subtree_root->is_authorized_node = 0;
+        subtree_root->num_authorized_children = 0;
 
         subtree_root->id = 0;
         subtree_root->num_shares = 0;
@@ -103,10 +105,7 @@ static threshold_tree_status threshold_tree_check_complete_subtree_structure_imp
     for (uint8_t i = 0; i < subtree->num_shares; ++i)
     {   
         threshold_tree_node_t *child = subtree->children[i];
-        // if (child)
-        // {
-        //     if (child->parent != subtree) return THRESHOLD_TREE_UNKNOWN_ERROR;
-        // }
+        // if (child) if (child->parent != subtree) return THRESHOLD_TREE_UNKNOWN_ERROR;
 
         if (threshold_tree_check_complete_subtree_structure_impl(child) != THRESHOLD_TREE_SUCCESS) return THRESHOLD_TREE_INCOMPLETE_STRUCTURE;
     }
@@ -153,46 +152,62 @@ threshold_tree_status threshold_tree_get_node_by_path(const threshold_tree_ctx_t
     return ret_status;
 }
 
-static threshold_tree_status threshold_tree_get_node_by_id_impl(threshold_tree_node_t *current_node, uint64_t id, threshold_tree_node_t **found_node)
+static size_t threshold_tree_get_nodes_by_ids_impl(const threshold_tree_node_t *subtree, uint64_t *ids, size_t num_ids, threshold_tree_node_t **found_nodes)
 {
-    if (!current_node) return THRESHOLD_TREE_MISSING_ID;
+    if (!subtree) return 0;
 
-    if (current_node->id == id) 
+    size_t count_found = 0;
+
+    for (size_t i = 0; i < num_ids; ++i)
     {
-        *found_node = current_node;
-        return THRESHOLD_TREE_SUCCESS;
+        if (subtree->id == ids[i])
+        {
+            if (found_nodes) found_nodes[i] = subtree;
+            ++count_found;
+        }
     }
 
-    for (uint8_t i = 0; i < current_node->num_shares; ++i)
+    for (uint8_t i = 0; i < subtree->num_shares; ++i)
     {
-        if (threshold_tree_get_node_by_id_impl(current_node->children[i], id, found_node) == THRESHOLD_TREE_SUCCESS) return THRESHOLD_TREE_SUCCESS;
+        count_found += threshold_tree_get_nodes_by_ids_impl(subtree->children[i], ids, num_ids, found_nodes);
     }
 
-    return THRESHOLD_TREE_MISSING_ID;
+    return count_found;
 }
 
-threshold_tree_status threshold_tree_get_node_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_node_t **found_node)
+threshold_tree_status threshold_tree_get_nodes_by_ids(const threshold_tree_ctx_t *tree_ctx, uint64_t *ids, size_t num_ids, threshold_tree_node_t **found_nodes, size_t *num_found)
 {
     if (!tree_ctx) return THRESHOLD_TREE_INVALID_CTX;
+    if (!ids) return THRESHOLD_TREE_INVALID_PARAMETER;
+
+    if (found_nodes) for (size_t i = 0; i < num_ids; ++i) found_nodes[i] = NULL;
     
-    threshold_tree_node_t *temp_found_node = NULL;
-    
-    threshold_tree_status ret_status = threshold_tree_get_node_by_id_impl(tree_ctx->root, id, &temp_found_node);
-    
-    if (found_node) *found_node = temp_found_node;
-    
-    return ret_status;
+    size_t temp_num_found = threshold_tree_get_nodes_by_ids_impl(tree_ctx->root, ids, num_ids, found_nodes);
+
+    if (num_found) *num_found = temp_num_found;
+
+    if (temp_num_found == num_ids)
+        return THRESHOLD_TREE_SUCCESS;
+    else
+        return THRESHOLD_TREE_MISSING_ID;
+}
+
+threshold_tree_status threshold_tree_get_single_node_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_node_t **found_node)
+{
+    size_t num_found;
+    uint64_t id_arr[1] = {id};
+    return threshold_tree_get_nodes_by_ids(tree_ctx, id_arr, 1, found_node, &num_found);
 }
 
 threshold_tree_status threshold_tree_add_node(threshold_tree_ctx_t *tree_ctx, const uint8_t *node_path, uint8_t node_path_length, uint64_t id, uint8_t num_shares, uint8_t threshold)
 {
     if (!tree_ctx) return THRESHOLD_TREE_INVALID_CTX;
     if (( (threshold == 0) && (num_shares > 0) ) || (threshold > num_shares)) return THRESHOLD_TREE_INVALID_THRESHOLD;
-    if (threshold_tree_get_node_by_id(tree_ctx, id, NULL) == THRESHOLD_TREE_SUCCESS) return THRESHOLD_TREE_INVALID_ID;
+    if (threshold_tree_get_single_node_by_id(tree_ctx, id, NULL) == THRESHOLD_TREE_SUCCESS) return THRESHOLD_TREE_INVALID_ID;
 
     threshold_tree_node_t *parent_node;
-    threshold_tree_node_t *new_node = (threshold_tree_node_t *) calloc(1, sizeof(threshold_tree_node_t));
 
+    threshold_tree_node_t *new_node = (threshold_tree_node_t *) calloc(1, sizeof(threshold_tree_node_t));
     if (!new_node) return THRESHOLD_TREE_OUT_OF_MEMORY;
 
     if (node_path_length == 0)
@@ -221,7 +236,8 @@ threshold_tree_status threshold_tree_add_node(threshold_tree_ctx_t *tree_ctx, co
     new_node->num_shares = num_shares;
     new_node->threshold = threshold;
     new_node->parent = parent_node;
-    new_node->is_authorized_subtree = 0;
+    new_node->is_authorized_node = 0;
+    new_node->num_authorized_children = 0;
 
     memset(new_node->secret_share, 0, sizeof(shamir_secret_sharing_scalar_t));
     memset(new_node->group_share, 0, sizeof(secp256k1_point_t));
@@ -302,36 +318,252 @@ static threshold_tree_status threshold_tree_share_secret_subtree_impl(threshold_
     return THRESHOLD_TREE_SUCCESS;
 
 cleanup:
-    verifiable_secret_sharing_free_shares(shares);
     free(ids);
-
-    memset(subtree->group_polynom_coeffs, 0, sizeof(secp256k1_point_t) * subtree->threshold);
+    verifiable_secret_sharing_free_shares(shares);
     memset(temp_share.data, 0, sizeof(shamir_secret_sharing_scalar_t));
-
-    for (uint8_t i = 0; i < subtree->num_shares; ++i)
-    {
-        memset(subtree->children[i]->secret_share, 0, sizeof(shamir_secret_sharing_scalar_t));
-    }
+    // TODO: Add zeroing all secrets in the tree
 
     return ret_status;
 }
 
 threshold_tree_status threshold_tree_share_secret(threshold_tree_ctx_t *tree_ctx, const shamir_secret_sharing_scalar_t secret)
 {
-    threshold_tree_status ret_status = THRESHOLD_TREE_SUCCESS;
+    threshold_tree_status ret_status = threshold_tree_check_complete_structure(tree_ctx);
 
-    if (!tree_ctx) return THRESHOLD_TREE_INVALID_CTX;
-
-    ret_status = threshold_tree_check_complete_structure(tree_ctx);
     if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
     
-    // Check all to-be-allocated data, is null now
+    // TODO: Check all to-be-allocated data, is null now
 
     memcpy(tree_ctx->root->secret_share, secret, sizeof(shamir_secret_sharing_scalar_t));
 
     return threshold_tree_share_secret_subtree_impl(tree_ctx->root);
 }
 
-// Use "verifiable_secret_sharing_reconstruct" to check sharing at each node
-// Write ecret clearing
+// Write secret clearing
 // Write veryfication of empty values (group_coeff, group_share, secret_share), to be used before sharing a new secret
+
+static threshold_tree_status threshold_tree_authorize_parents_from_marked_node_impl(threshold_tree_node_t *curr_node)
+{
+    if (!curr_node) return THRESHOLD_TREE_UNKNOWN_ERROR;
+    
+    if (curr_node->is_authorized_node) return THRESHOLD_TREE_SUCCESS;
+
+    curr_node->is_authorized_node = 1;
+
+    if (!curr_node->parent) return THRESHOLD_TREE_SUCCESS;
+
+    curr_node->is_authorized_node = 1;
+    curr_node->parent->num_authorized_children++;
+
+    if (curr_node->parent->num_authorized_children >= curr_node->parent->threshold)
+        threshold_tree_authorize_parents_from_marked_node_impl(curr_node->parent);
+
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_mark_authorized_subtree_by_ids(threshold_tree_ctx_t *tree_ctx, uint64_t *ids, size_t num_ids)
+{
+    threshold_tree_status ret_status = THRESHOLD_TREE_UNKNOWN_ERROR;
+
+    threshold_tree_node_t **ids_nodes = malloc(num_ids * sizeof(threshold_tree_node_t *));
+    if (!ids_nodes) return THRESHOLD_TREE_OUT_OF_MEMORY;
+
+    size_t num_found_nodes = 0; 
+
+    threshold_tree_get_nodes_by_ids(tree_ctx, ids, num_ids, ids_nodes, &num_found_nodes);
+
+    if (num_found_nodes != num_ids) goto cleanup_missing_id;
+    for (size_t i = 0; i < num_ids; ++i) if (!ids_nodes[i]) goto cleanup_missing_id;
+
+    // TODO clear marking here 
+
+    for (size_t i = 0; i < num_ids; ++i)
+    {
+        ret_status = threshold_tree_authorize_parents_from_marked_node_impl(ids_nodes[i]);
+        if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+    }
+
+    free(ids_nodes);
+    return ret_status;
+
+cleanup_missing_id:
+    ret_status = THRESHOLD_TREE_MISSING_ID;
+cleanup:
+    free(ids_nodes);
+    // TODO clear marking here 
+    return ret_status;
+}
+
+// -------------------------------------------------- Testing Auxiliary Functions --------------------------------------------------
+
+// all_combinations must point to a null pointer (which we be allocated with the num_created combinations)
+int generate_all_combinations_impl(uint8_t input_data[], uint8_t data_index, uint8_t data_size, uint8_t combination_size, uint8_t current_combination[], uint8_t current_index, uint8_t **all_combinations, size_t *num_created) 
+{ 
+    int ret_status = 1;
+
+    // Current cobination is ready, save it 
+    if (current_index >= combination_size)
+    { 
+        size_t combination_byte_size = sizeof(uint8_t) * combination_size;
+
+        uint8_t *temp_alloc = realloc(*all_combinations, (*num_created + 1) * combination_byte_size);
+        if (!temp_alloc) goto cleanup;
+        *all_combinations = temp_alloc;
+
+        memcpy((*all_combinations) + combination_byte_size * (*num_created) , current_combination, combination_byte_size); 
+
+        *num_created += 1;
+
+        return 0;
+    } 
+
+    if (data_index >= data_size) return 0; 
+
+    // Include current input value
+    current_combination[current_index] = input_data[data_index]; 
+
+    ret_status = generate_all_combinations_impl(input_data, data_index+1, data_size, combination_size, current_combination, current_index + 1, all_combinations, num_created);
+    if (ret_status) goto cleanup;
+
+    // Exclude current input value
+    ret_status = generate_all_combinations_impl(input_data, data_index+1, data_size, combination_size, current_combination, current_index, all_combinations, num_created);
+    if (ret_status) goto cleanup;
+
+    return 0;
+
+cleanup:
+    free(*all_combinations);
+    *all_combinations = NULL;
+    return ret_status;
+}
+
+
+int get_all_combinations(uint8_t data_size, uint8_t combination_size, uint8_t **all_combinations, size_t *num_combinations) 
+{ 
+    int ret_status = 1; // default error
+
+    if (!all_combinations) return ret_status;
+    if (*all_combinations) return ret_status;
+
+    uint8_t *arr = malloc(data_size * sizeof(uint8_t));
+    if (!arr) goto cleanup;
+
+    for (uint8_t i = 0; i < data_size; ++i) arr[i] = i;
+
+    uint8_t *current_combination = malloc(combination_size * sizeof(uint8_t));
+    if (!current_combination) goto cleanup;
+
+    *num_combinations = 0;
+    
+    if (generate_all_combinations_impl(arr, 0, data_size, combination_size, current_combination, 0, all_combinations, num_combinations)) goto cleanup;
+
+    ret_status = 0;
+
+cleanup:
+    free(arr);
+    free(current_combination);
+    
+    return ret_status;;
+} 
+  
+static threshold_tree_status test_threshold_tree_verify_all_shares_impl(threshold_tree_node_t *subtree)
+{
+    if (!subtree) return THRESHOLD_TREE_SUCCESS;
+    if (!subtree->num_shares) return THRESHOLD_TREE_SUCCESS;
+
+    threshold_tree_status ret_status = THRESHOLD_TREE_UNKNOWN_ERROR;
+
+    uint8_t reconstructed_secret[sizeof(shamir_secret_sharing_scalar_t)];
+
+    uint8_t *all_indices_combinations = NULL;
+
+    shamir_secret_share_t *current_child_shares = malloc(subtree->num_shares * sizeof(shamir_secret_share_t));
+    if (!current_child_shares)
+    {
+        ret_status = THRESHOLD_TREE_OUT_OF_MEMORY;
+        goto cleanup;
+    }
+
+    for (uint8_t thr = 1; thr <= subtree->num_shares; ++thr)
+    {
+        size_t num_of_comb;
+
+        if (get_all_combinations(subtree->num_shares, thr, &all_indices_combinations, &num_of_comb))
+        {
+            ret_status = THRESHOLD_TREE_OUT_OF_MEMORY;
+            goto cleanup;
+        }
+
+        for (size_t comb = 0; comb < num_of_comb; ++comb)
+        {
+            uint8_t *current_indices = all_indices_combinations + (comb * thr * sizeof(uint8_t));
+
+            printf("Checking Reconstruction of ");
+            for (uint8_t i = 0; i < thr; ++i) 
+            {
+                current_child_shares[i].id = subtree->children[current_indices[i]]->id;
+                memcpy(current_child_shares[i].data, subtree->children[current_indices[i]]->secret_share, sizeof(shamir_secret_sharing_scalar_t));
+                printf("%ld ", current_child_shares[i].id);
+            }
+            printf("\n");
+
+            ret_status = from_verifiable_secret_sharing_status(
+                verifiable_secret_sharing_reconstruct(current_child_shares, thr, reconstructed_secret, sizeof(shamir_secret_sharing_scalar_t), NULL));
+            if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+
+            if (memcmp(reconstructed_secret, subtree->secret_share, sizeof(shamir_secret_sharing_scalar_t)))
+            {
+                if (thr < subtree->threshold)
+                {
+                    printf("Couldn't - GOOD\n");
+                }
+                else 
+                {
+                    ret_status = THRESHOLD_TREE_SHARING_INVALID_SHARE;
+                    printf("Reconstruction failed!\n");
+                    goto cleanup;
+                }
+            }
+            else    // same string
+            {
+                if (thr < subtree->threshold)
+                {
+                    ret_status = THRESHOLD_TREE_UNKNOWN_ERROR;
+                    printf("Reconstruction success with less than threshold number of shares- VERY WEIRD!\n");
+                    goto cleanup;
+                }
+                else
+                {
+                    printf("Success!\n");
+                }
+            }
+        }
+
+        free(all_indices_combinations);
+        all_indices_combinations = NULL;      
+    }
+    
+    for (uint8_t i = 0; i < subtree->num_shares; ++i) {
+        ret_status = test_threshold_tree_verify_all_shares_impl(subtree->children[i]);
+        if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+    }
+    
+    ret_status = THRESHOLD_TREE_SUCCESS;
+
+cleanup:
+    free(all_indices_combinations);
+    free(current_child_shares);
+    memset(reconstructed_secret, 0, sizeof(shamir_secret_sharing_scalar_t));
+
+    return ret_status;
+}
+
+threshold_tree_status test_threshold_tree_verify_all_shares(threshold_tree_ctx_t *tree_ctx)
+{
+    threshold_tree_status ret_status = threshold_tree_check_complete_structure(tree_ctx);
+
+    if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
+
+    return test_threshold_tree_verify_all_shares_impl(tree_ctx->root);
+}
+
