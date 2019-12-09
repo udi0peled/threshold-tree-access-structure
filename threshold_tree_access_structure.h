@@ -10,6 +10,7 @@ extern "C" {
 #endif //__cplusplus
 
 typedef struct threshold_tree_ctx threshold_tree_ctx_t;
+typedef struct threshold_tree_player threshold_tree_player_t;
 
 typedef enum
 {

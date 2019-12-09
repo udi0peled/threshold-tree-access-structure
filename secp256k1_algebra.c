@@ -683,3 +683,39 @@ cleanup:
     BN_clear_free(tmp);
     return ret;
 }
+
+// UDI: added function used in threshold tree
+secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t *res)
+{
+    if (!ctx || !res) return SECP256K1_ALGEBRA_INVALID_PARAMETER;
+
+    secp256k1_algebra_status ret_status = SECP256K1_ALGEBRA_UNKNOWN_ERROR;
+
+    BN_CTX *bn_ctx = NULL;
+
+    bn_ctx = BN_CTX_new();
+    if (!bn_ctx) return SECP256K1_ALGEBRA_OUT_OF_MEMORY;
+    
+    BN_CTX_start(bn_ctx);
+
+    BIGNUM *bn_value = BN_CTX_get(bn_ctx);
+    if (!BN_set_word(bn_value, value)) 
+    {
+        ret_status = from_openssl_error(ERR_get_error());
+        goto cleanup;
+    }
+    if (!BN_mod(bn_value, bn_value, EC_GROUP_get0_order(ctx->secp256k1), bn_ctx))
+    {
+        ret_status = from_openssl_error(ERR_get_error());
+        goto cleanup;
+    }
+
+    ret_status = BN_bn2binpad(bn_value, *res, sizeof(secp256k1_scalar_t)) > 0 ? SECP256K1_ALGEBRA_SUCCESS : SECP256K1_ALGEBRA_UNKNOWN_ERROR;
+
+cleanup:
+    if (bn_value) BN_clear(bn_value);
+    BN_CTX_end(bn_ctx);
+    BN_CTX_free(bn_ctx);
+
+    return ret_status;
+}

@@ -218,8 +218,8 @@ int main() {
 
   //REQUIRE(test_threshold_tree_verify_all_shares(arbitrary_tree_ctx) == THRESHOLD_TREE_SUCCESS);
 
-  uint64_t ids[] = {1010, 110, 12, 100};
-  threshold_tree_mark_authorized_subtree_by_ids(arbitrary_tree_ctx, ids, 4);
+  uint64_t ids[] = {1010, 1010, 12, 100};
+  threshold_tree_mark_authorized_subtree_by_ids(arbitrary_tree_ctx, ids, 2);
 
   print_threshold_tree(arbitrary_tree_ctx, "Arbitrary After Secret Shared:", "\n");
 
@@ -239,5 +239,7 @@ int main() {
 
   //REQUIRE(test_threshold_tree_verify_all_shares(one_level_tree_ctx) == THRESHOLD_TREE_SUCCESS);
 
+  threshold_tree_compute_lagrange_coeffs_at_authorized_nodes(one_level_tree_ctx);
+  
   threshold_tree_ctx_free(one_level_tree_ctx);
 }

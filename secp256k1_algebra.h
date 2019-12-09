@@ -59,6 +59,9 @@ secp256k1_algebra_status secp256k1_algebra_abs(secp256k1_algebra_ctx_t *ctx, sec
 /* Returns a random number over the secp256k1 order */
 secp256k1_algebra_status secp256k1_algebra_rand(secp256k1_algebra_ctx_t *ctx, secp256k1_scalar_t *res);
 
+// UDI: added function used in threshold tree
+secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t *res);
+
 #ifdef __cplusplus
 }
 #endif //__cplusplus
