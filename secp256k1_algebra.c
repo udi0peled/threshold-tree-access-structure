@@ -219,7 +219,7 @@ secp256k1_algebra_status secp256k1_algebra_verify_linear_combination(const secp2
     if (!points)
         goto cleanup;
     
-    for (size_t i = 0; i < points_count; ++i)
+    for (uint64_t i = 0; i < points_count; ++i)
     {
         points[i] = EC_POINT_new(ctx->secp256k1);
         if (!points[i])
@@ -235,7 +235,7 @@ secp256k1_algebra_status secp256k1_algebra_verify_linear_combination(const secp2
     if (!coeff)
         goto cleanup;
     
-    for (size_t i = 0; i < points_count; ++i)
+    for (uint64_t i = 0; i < points_count; ++i)
     {
         coeff[i] = BN_CTX_get(bn_ctx);
         if (!coeff[i] || !BN_bin2bn(coefficients[i], sizeof(secp256k1_scalar_t), coeff[i]))
@@ -261,7 +261,7 @@ secp256k1_algebra_status secp256k1_algebra_verify_linear_combination(const secp2
     }
     
 cleanup:
-    for (size_t i = 0; i < points_count; ++i)
+    for (uint64_t i = 0; i < points_count; ++i)
     {
         if (coeff[i])
             BN_clear(coeff[i]);
@@ -272,7 +272,7 @@ cleanup:
 
     if (points)
     {
-        for (size_t i = 0; i < points_count; ++i)
+        for (uint64_t i = 0; i < points_count; ++i)
             EC_POINT_free(points[i]);
         free(points);
     }
@@ -685,7 +685,7 @@ cleanup:
 }
 
 // UDI: added function used in threshold tree
-secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t *res)
+secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t res)
 {
     if (!ctx || !res) return SECP256K1_ALGEBRA_INVALID_PARAMETER;
 
@@ -699,23 +699,84 @@ secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_
     BN_CTX_start(bn_ctx);
 
     BIGNUM *bn_value = BN_CTX_get(bn_ctx);
-    if (!BN_set_word(bn_value, value)) 
-    {
-        ret_status = from_openssl_error(ERR_get_error());
-        goto cleanup;
-    }
-    if (!BN_mod(bn_value, bn_value, EC_GROUP_get0_order(ctx->secp256k1), bn_ctx))
-    {
-        ret_status = from_openssl_error(ERR_get_error());
-        goto cleanup;
-    }
+    
+    if (!BN_set_word(bn_value, value)) goto cleanup;
+    
+    if (!BN_mod(bn_value, bn_value, EC_GROUP_get0_order(ctx->secp256k1), bn_ctx)) goto cleanup;
 
-    ret_status = BN_bn2binpad(bn_value, *res, sizeof(secp256k1_scalar_t)) > 0 ? SECP256K1_ALGEBRA_SUCCESS : SECP256K1_ALGEBRA_UNKNOWN_ERROR;
+    ret_status = BN_bn2binpad(bn_value, res, sizeof(secp256k1_scalar_t)) > 0 ? SECP256K1_ALGEBRA_SUCCESS : SECP256K1_ALGEBRA_UNKNOWN_ERROR;
 
 cleanup:
     if (bn_value) BN_clear(bn_value);
     BN_CTX_end(bn_ctx);
     BN_CTX_free(bn_ctx);
+    if (ret_status != SECP256K1_ALGEBRA_SUCCESS) ret_status = from_openssl_error(ERR_get_error());
+    return ret_status;
+}
 
+// UDI: added to simpify  calcuation in the tree (and avoid BN or algebra's mul/sub/inverse usage)
+secp256k1_algebra_status secp256k1_algebra_lagrange_interpolate_ids_at_value(secp256k1_algebra_ctx_t *algebra_ctx, const uint64_t *ids, uint8_t num_ids, uint8_t goal_index, uint64_t at_value, const secp256k1_scalar_t init_product, secp256k1_scalar_t result)
+{
+    BN_CTX *bn_ctx = NULL;
+    BIGNUM *bn_result = NULL;
+    BIGNUM *bn_curr = NULL;
+    BIGNUM *bn_goal_id = NULL;
+    BIGNUM *bn_temp = NULL;
+    BIGNUM *bn_at_value = NULL;
+    const BIGNUM *field_order = EC_GROUP_get0_order(algebra_ctx->secp256k1);
+
+    secp256k1_algebra_status ret_status = SECP256K1_ALGEBRA_OUT_OF_MEMORY;
+
+    if (!algebra_ctx || (!ids && num_ids > 0) || !result) return SECP256K1_ALGEBRA_INVALID_PARAMETER;
+
+    bn_ctx = BN_CTX_new();
+    if (!bn_ctx) return SECP256K1_ALGEBRA_OUT_OF_MEMORY;
+    
+    BN_CTX_start(bn_ctx);
+
+    bn_result = BN_CTX_get(bn_ctx);
+    bn_curr = BN_CTX_get(bn_ctx);
+    bn_goal_id = BN_CTX_get(bn_ctx);
+    bn_at_value = BN_CTX_get(bn_ctx);
+    bn_temp = BN_CTX_get(bn_ctx);
+
+    if (!bn_result || !bn_curr || !bn_goal_id || !bn_temp) goto cleanup;
+
+    if (!BN_set_word(bn_goal_id, ids[goal_index])) goto cleanup;
+
+    if (!BN_set_word(bn_at_value, at_value)) goto cleanup;
+
+    if (init_product)
+    {
+        if (!BN_bin2bn(init_product, sizeof(secp256k1_scalar_t), bn_result)) goto cleanup;
+    }
+    else
+    {
+        if (!BN_one(bn_result)) goto cleanup;
+    }
+
+    for (uint8_t i = 0; i < num_ids; ++i)
+    {
+        if (i == goal_index) continue;
+
+        if (!BN_set_word(bn_temp, ids[i])) goto cleanup;
+
+        if (!BN_mod_sub(bn_curr, bn_temp, bn_at_value, field_order, bn_ctx)) goto cleanup;
+
+        if (!BN_mod_sub(bn_temp, bn_temp, bn_goal_id, field_order, bn_ctx)) goto cleanup;
+
+        if (!BN_mod_inverse(bn_temp, bn_temp, field_order, bn_ctx)) goto cleanup;
+        
+        if (!BN_mod_mul(bn_curr, bn_curr, bn_temp, field_order, bn_ctx)) goto cleanup;
+
+        if (!BN_mod_mul(bn_result, bn_result, bn_curr, field_order, bn_ctx)) goto cleanup;
+    }
+
+    ret_status = BN_bn2binpad(bn_result, result, sizeof(secp256k1_scalar_t)) > 0 ? SECP256K1_ALGEBRA_SUCCESS : SECP256K1_ALGEBRA_UNKNOWN_ERROR;
+
+cleanup:
+    BN_CTX_end(bn_ctx);
+    BN_CTX_free(bn_ctx);
+    if (ret_status != SECP256K1_ALGEBRA_SUCCESS) ret_status = from_openssl_error(ERR_get_error());
     return ret_status;
 }

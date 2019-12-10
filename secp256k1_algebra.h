@@ -60,7 +60,8 @@ secp256k1_algebra_status secp256k1_algebra_abs(secp256k1_algebra_ctx_t *ctx, sec
 secp256k1_algebra_status secp256k1_algebra_rand(secp256k1_algebra_ctx_t *ctx, secp256k1_scalar_t *res);
 
 // UDI: added function used in threshold tree
-secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t *res);
+secp256k1_algebra_status secp256k1_algebra_scalar_from_ul(secp256k1_algebra_ctx_t *ctx, unsigned long value, secp256k1_scalar_t res);
+secp256k1_algebra_status secp256k1_algebra_lagrange_interpolate_ids_at_value(secp256k1_algebra_ctx_t *algebra_ctx, const uint64_t *ids, uint8_t num_ids, uint8_t goal_index, uint64_t at_value, const secp256k1_scalar_t init_product, secp256k1_scalar_t result);
 
 #ifdef __cplusplus
 }
