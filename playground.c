@@ -12,7 +12,7 @@
 
 const char PRINT_INDENT_STR[] = "-->";
 const char PRINT_NULL_POINTER[] = "<>";
-uint8_t print_max_height = 5;
+uint8_t print_max_height = 10;
 
 void printHexBytes(const unsigned char *src, unsigned int len, const char * prefix, const char * suffix) {
   if (len == 0) {
@@ -420,7 +420,7 @@ int main() {
 
   unsigned int seed = time(0);
 
-  test_threshold_tree_build_random_tree(random_tree_ctx, seed, 3, 6);
+  test_threshold_tree_build_random_tree(random_tree_ctx, seed, 10, 6);
 
   printf("Seed: %u, ", seed);
   print_threshold_tree(random_tree_ctx, "Random Tree:", "\n");
