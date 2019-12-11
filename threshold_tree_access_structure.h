@@ -11,13 +11,15 @@ extern "C" {
 
 typedef struct threshold_tree_ctx threshold_tree_ctx_t;
 typedef struct threshold_tree_node* threshold_tree_party_t;
+typedef secp256k1_scalar_t threshold_tree_scalar_t;
+typedef secp256k1_point_t threshold_tree_group_point_t;
 
 typedef enum
 {
     THRESHOLD_TREE_SUCCESS                  =  0,
     THRESHOLD_TREE_UNKNOWN_ERROR            = -1,
     THRESHOLD_TREE_INVALID_PARAMETER        = -2,
-    THRESHOLD_TREE_INCOMPLETE_STRUCTURE     = -3,
+    THRESHOLD_TREE_INVALID_TREE_STRUCTURE   = -3,
     THRESHOLD_TREE_INSUFFICIENT_BUFFER      = -4,
     THRESHOLD_TREE_OUT_OF_MEMORY            = -5,
     THRESHOLD_TREE_MISSING_ID               = -6,

@@ -73,6 +73,8 @@ verifiable_secret_sharing_status verifiable_secret_sharing_verify_commitment(con
 
 void verifiable_secret_sharing_free_shares(verifiable_secret_sharing_t *shares);
 
+// UDI: to support adding user in general t/n and threshold tree, need to implement secret sharing and verification under constraint (x,y) of shamir polynomial
+
 #ifdef __cplusplus
 }
 #endif //__cplusplus
