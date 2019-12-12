@@ -8,8 +8,6 @@
 
 // -------------------------------------------------- Printing --------------------------------------------------
 
-#pragma region
-
 const char PRINT_INDENT_STR[] = "-->";
 const char PRINT_NULL_POINTER[] = "***";
 uint8_t print_max_height = 10;
@@ -350,11 +348,34 @@ cleanup:
   return ret_status;
 }
 
-#pragma endregion
+threshold_tree_status test_secret_reconstruction(threshold_tree_ctx_t *tree_ctx, threshold_tree_party_t *parties, uint64_t num_parties)
+{
+  secp256k1_algebra_ctx_t *algebra_ctx = secp256k1_algebra_ctx_new();
+  threshold_tree_status ret_status = THRESHOLD_TREE_UNKNOWN_ERROR;
+  secp256k1_scalar_t curr_weighted_secret;
+  secp256k1_scalar_t weighted_sum;
 
-// ---------------------------------------- Testing Tree ---------------------------------------- 
+  secp256k1_algebra_scalar_from_ul(algebra_ctx, 0, weighted_sum);
 
-void empty_tree_lookup(threshold_tree_ctx_t *tree_ctx)
+  for (uint64_t i = 0; i < num_parties; ++i)
+  {
+    ret_status = from_secp256k1_algebra_status(
+      secp256k1_algebra_mul_scalars(algebra_ctx, &curr_weighted_secret, parties[i]->secret_share, sizeof(secp256k1_scalar_t), parties[i]->lagrange_coeff, sizeof(secp256k1_scalar_t) ));
+    if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+
+
+    ret_status = from_secp256k1_algebra_status(
+      secp256k1_algebra_add_scalars(algebra_ctx, &weighted_sum, weighted_sum, sizeof(secp256k1_scalar_t), curr_weighted_secret, sizeof(secp256k1_scalar_t) ));
+    if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+  }
+
+  ret_status = memcmp(tree_ctx->root->secret_share, weighted_sum, sizeof(secp256k1_scalar_t)) ? THRESHOLD_TREE_INVALID_SECRET : THRESHOLD_TREE_SUCCESS;
+
+cleanup:
+  secp256k1_algebra_ctx_free(algebra_ctx);
+  return ret_status;
+}
+void test_empty_tree_lookup(threshold_tree_ctx_t *tree_ctx)
 {
   threshold_tree_node_t *found_node = NULL;
 
@@ -364,156 +385,327 @@ void empty_tree_lookup(threshold_tree_ctx_t *tree_ctx)
   REQUIRE(threshold_tree_get_single_party_by_id(tree_ctx, 5432, &found_node) == THRESHOLD_TREE_MISSING_ID); REQUIRE(found_node == NULL);
 }
 
-void build_one_level_tree(threshold_tree_ctx_t *tree_ctx) {
+void test_one_level_2o3_tree() {
+
+  REQUIRE(threshold_tree_get_single_party_by_id(NULL, 5432, NULL) == THRESHOLD_TREE_INVALID_PARAMETER);
+
+  threshold_tree_ctx_t *tree_ctx = NULL;  
+  tree_ctx = threshold_tree_ctx_new(); REQUIRE(tree_ctx != NULL);
+
+  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  print_threshold_tree(tree_ctx, "Empty 2/3 Tree:", "\n");
 
   threshold_tree_party_t dummy = NULL;
 
   REQUIRE(threshold_tree_add_new_child(NULL, NULL, 0, 99, 2, 1, &dummy) == THRESHOLD_TREE_INVALID_PARAMETER); REQUIRE(dummy == NULL); 
-  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+
   REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 99, 1, 2, &dummy) == THRESHOLD_TREE_INVALID_PARAMETER); REQUIRE(dummy == NULL);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 99, 1, 0, &dummy) == THRESHOLD_TREE_INVALID_PARAMETER); REQUIRE(dummy == NULL);
   
-  print_threshold_tree(tree_ctx, "Empty Tree:", "------------\n");
+  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  print_threshold_tree(tree_ctx, "Empty 2/3 Tree:", "\n");
 
   threshold_tree_party_t root;
   threshold_tree_party_t level1[3];
 
   REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 1, 3, 2, &root) == THRESHOLD_TREE_SUCCESS);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 99, 3, 2, &dummy) == THRESHOLD_TREE_INVALID_PARAMETER); REQUIRE(dummy == NULL);
+  
   REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
-
-  print_threshold_tree(tree_ctx, "2/3 Root:", "------------\n");
+  print_threshold_tree(tree_ctx, "Root 2/3 :", "\n");
 
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 1, 11, 0, 0, &level1[1]) == THRESHOLD_TREE_SUCCESS);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 1, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
-    print_threshold_tree(tree_ctx, "2/3 Root:", "------------\n");
+
+  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  print_threshold_tree(tree_ctx, "1 Node 2/3:", "\n");
+
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 2, 11, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_ID); REQUIRE(dummy == NULL);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 3, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
+  
   REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
-
-  print_threshold_tree(tree_ctx, "2/3 nodes: 1:", "------------\n");
+  print_threshold_tree(tree_ctx, "1 Node 2/3:", "\n");
   
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 0, 10, 0, 0, &level1[0]) == THRESHOLD_TREE_SUCCESS);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 0, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
+  
   REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
-
-  print_threshold_tree(tree_ctx, "2/3 nodes: 01:", "------------\n");
+  print_threshold_tree(tree_ctx, "1,2 Nodes 2/3", "\n");
   
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 0, 10, 0, 0, NULL) == THRESHOLD_TREE_INVALID_ID);
   REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 2, 122, 0, 0, &level1[2]) == THRESHOLD_TREE_SUCCESS);
 
   REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+  print_threshold_tree(tree_ctx, "0,1,2 Nodes 2/3", "\n");
 
-  print_threshold_tree(tree_ctx, "2/3 nodes: 012:", "------------\n");
+  { // Authorization
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &root, 0) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    print_threshold_tree(tree_ctx, "No Authorized ", "\n");
 
-  threshold_tree_set_authorized_subtree_by_parties(tree_ctx, level1, 3);
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &root, 1) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    print_threshold_tree(tree_ctx, "Root Authorized ", "\n");
 
-  print_threshold_tree(tree_ctx, "2/3 authorized:", "------------\n");
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, level1, 3) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    print_threshold_tree(tree_ctx, "1,2,3 Authorized ", "\n");
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, level1, 0) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    print_threshold_tree(tree_ctx, "No Authorized ", "\n");
+    
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, level1, 1) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    print_threshold_tree(tree_ctx, "0 Authorized ", "\n");
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &level1[1], 1) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    print_threshold_tree(tree_ctx, "1 Authorized ", "\n");
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &level1[2], 1) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    print_threshold_tree(tree_ctx, "2 Authorized ", "\n");
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, level1, 2) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    print_threshold_tree(tree_ctx, "0,1 Authorized ", "\n");
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &level1[1], 2) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    print_threshold_tree(tree_ctx, "1,2 Authorized ", "\n");
+  }
+
+  threshold_tree_ctx_free(tree_ctx);
 }
-
-void build_bakkt_tree(threshold_tree_ctx_t *tree_ctx)
+void test_bakkt_tree()
 {
-
-  threshold_tree_party_t dummy = NULL;
-  
   threshold_tree_party_t root;
   threshold_tree_party_t level1[3];
   threshold_tree_party_t level2[12];
 
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 1, 3, 2, &root) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 99, 3, 2, &dummy) == THRESHOLD_TREE_INVALID_PARAMETER); REQUIRE(dummy == NULL);
-  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  threshold_tree_ctx_t *tree_ctx = threshold_tree_ctx_new();
 
-  print_threshold_tree(tree_ctx, "2/3 Root:", "------------\n");
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, NULL, 0, 5, 3, 3, &root) == THRESHOLD_TREE_SUCCESS);
 
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 1, 11, 0, 0, &level1[1]) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 1, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 2, 11, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_ID); REQUIRE(dummy == NULL);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 3, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
-  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
-
-  print_threshold_tree(tree_ctx, "2/3 nodes: 1:", "------------\n");
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 0, 500, 4, 2, &level1[0]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 1, 501, 4, 2, &level1[1]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 2, 502 , 4, 2, &level1[2]) == THRESHOLD_TREE_SUCCESS);
   
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 0, 10, 0, 0, &level1[0]) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 0, 99, 0, 0, &dummy) == THRESHOLD_TREE_INVALID_INDEX); REQUIRE(dummy == NULL);
-  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 0, 50001, 0, 0, &level2[0]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 1, 50002, 0, 0, &level2[1]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 2, 50003, 0, 0, &level2[2]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[0], 3, 50004, 0, 0, &level2[3]) == THRESHOLD_TREE_SUCCESS);
 
-  print_threshold_tree(tree_ctx, "2/3 nodes: 01:", "------------\n");
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[1], 0, 50100, 0, 0, &level2[4]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[1], 1, 50101, 0, 0, &level2[5]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[1], 2, 50102, 0, 0, &level2[6]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[1], 3, 50103, 0, 0, &level2[7]) == THRESHOLD_TREE_SUCCESS);
+
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[2], 0, 50200, 0, 0, &level2[8]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[2], 1, 50201, 0, 0, &level2[9]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[2], 2, 50202, 0, 0, &level2[10]) == THRESHOLD_TREE_SUCCESS);
   
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 0, 10, 0, 0, NULL) == THRESHOLD_TREE_INVALID_ID);
-  REQUIRE(threshold_tree_add_new_child(tree_ctx, root, 2, 12, 0, 0, &level1[2]) == THRESHOLD_TREE_SUCCESS);
+  REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_INVALID_TREE_STRUCTURE);
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[2], 3, 500, 0, 0, &level2[11]) == THRESHOLD_TREE_INVALID_ID);
+
+  REQUIRE(threshold_tree_add_new_child(tree_ctx, level1[2], 3, 50203, 0, 0, &level2[11]) == THRESHOLD_TREE_SUCCESS);
 
   REQUIRE(threshold_tree_is_complete_structure(tree_ctx) == THRESHOLD_TREE_SUCCESS);
-
-  print_threshold_tree(tree_ctx, "2/3 nodes: 012:", "------------\n");
-}
-
-/*
-void lookup_in_built_tree(threshold_tree_ctx_t *tree_ctx)
-{
-  threshold_tree_node_t *found_node = NULL;
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 0, &found_node) == THRESHOLD_TREE_MISSING_ID);
-  REQUIRE(found_node == NULL);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 1, &found_node) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(found_node != NULL);
-  REQUIRE(found_node->num_shares == 3);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 12, &found_node) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(found_node != NULL);
-  REQUIRE(found_node->num_shares == 0);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 13, &found_node) == THRESHOLD_TREE_MISSING_ID);
-  REQUIRE(found_node == NULL);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 10, &found_node) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(found_node != NULL);
-  REQUIRE(found_node->num_shares == 2);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 101, &found_node) == THRESHOLD_TREE_SUCCESS);
-  REQUIRE(found_node != NULL);
-  REQUIRE(found_node->num_shares == 1);
-
-  REQUIRE(threshold_tree_get_single_node_by_id(tree_ctx, 1011, &found_node) == THRESHOLD_TREE_MISSING_ID);
-  REQUIRE(found_node == NULL);
-}
-*/
-void share_secret(threshold_tree_ctx_t *tree_ctx, const shamir_secret_sharing_scalar_t secret) {
-  REQUIRE(threshold_tree_share_secret(tree_ctx, secret) == THRESHOLD_TREE_SUCCESS);
-}
-
-// TODO: Add tests for get_nodes by ids
-
-int main() {
-
-  //const unsigned char secret[33] = "01234567890123456789012345678912";
-
-  threshold_tree_ctx_t *tree_ctx = NULL;
-
-  REQUIRE(threshold_tree_get_single_party_by_id(NULL, 5432, NULL) == THRESHOLD_TREE_INVALID_PARAMETER);
   
-  tree_ctx = threshold_tree_ctx_new();
+  {
+    uint64_t ids[6] = {500, 50100, 50202, 50100, 500, 6};
+    threshold_tree_party_t found[6];
+    uint64_t num_found;
 
-  build_one_level_tree(tree_ctx);
+    REQUIRE(threshold_tree_get_parties_by_ids(NULL, ids, 0, found,  &num_found) == THRESHOLD_TREE_INVALID_PARAMETER);
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, NULL, 1, found,  &num_found) == THRESHOLD_TREE_INVALID_PARAMETER);
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, ids, 0, found,  &num_found) == THRESHOLD_TREE_INVALID_PARAMETER);
 
-  threshold_tree_group_point_t *points;
-  uint64_t num_points; 
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, ids, 1, found,  &num_found) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(num_found == 1);
+    REQUIRE(found[0]->id == ids[0]);
 
-  threshold_tree_serialize_group_points(tree_ctx, &points, &num_points);
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, ids, 5, found,  &num_found) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(num_found == 5);
+    REQUIRE(found[1] == found[3]);
+    REQUIRE(found[0] == found[4]);
+    for (int i = 0; i < 5; ++i) REQUIRE(found[i]->id == ids[i]);
+
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, &ids[5], 1, found,  &num_found) == THRESHOLD_TREE_MISSING_ID);
+    REQUIRE(num_found == 0);
+    REQUIRE(found[0] == NULL);
+
+    REQUIRE(threshold_tree_get_parties_by_ids(tree_ctx, ids, 6, found,  &num_found) == THRESHOLD_TREE_MISSING_ID);
+    REQUIRE(num_found == 5);
+    REQUIRE(found[1] == found[3]);
+    REQUIRE(found[0] == found[4]);
+    for (int i = 0; i < 5; ++i) REQUIRE(found[i]->id == ids[i]);
+    REQUIRE(found[5] == NULL); 
+  }
+
+  { // Duplication and serialization
+
+  }
+
+  { // Value Clearing 
+
+  }
   
-  //lookup_in_built_tree(arbitrary_tree_ctx);
+  { // Secret Sharing
+    threshold_tree_scalar_t secret = "01234567890123456789012345678901";
 
-//  share_secret(arbitrary_tree_ctx, secret);
+    REQUIRE(threshold_tree_share_secret(tree_ctx, secret) == THRESHOLD_TREE_SUCCESS);
+    
+    print_threshold_tree(tree_ctx, "Bakkt Tree:", "\n");
 
-//  print_threshold_tree(arbitrary_tree_ctx, "Arbitrary After Secret Shared:", "\n");
+    REQUIRE(test_threshold_tree_verify_all_shares(tree_ctx) == THRESHOLD_TREE_SUCCESS);
 
-  //REQUIRE(test_threshold_tree_verify_all_shares(arbitrary_tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    threshold_tree_party_t parties[9];
 
-  //print_threshold_tree(arbitrary_tree_ctx, "Arbitrary After Secret Shared:", "\n");
+    for (uint64_t i = 0; i < 2; ++i)
+    {
+      for (uint64_t j = 4; j < 6; ++j)
+      {
+        for (uint64_t k = 8; k < 10; ++k)
+        {
+          parties[0] = level2[i];
+          parties[1] = level2[i+1];
+          parties[2] = level2[i+2];
+          parties[3] = level2[j];
+          parties[4] = level2[j+2];
+          parties[5] = level2[k];
+          parties[6] = level2[k+1];
+          parties[7] = level2[k+2];
+          parties[8] = level2[k+1];
+          
+          REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 7) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(threshold_tree_compute_lagrange_coeffs_at_authorized_subtree(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 7) == THRESHOLD_TREE_SUCCESS);
+
+          REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 8) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(threshold_tree_compute_lagrange_coeffs_at_authorized_subtree(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 8) == THRESHOLD_TREE_SUCCESS);
+        
+          REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 9) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(threshold_tree_compute_lagrange_coeffs_at_authorized_subtree(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 9) == THRESHOLD_TREE_INVALID_SECRET);
+
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 1) == THRESHOLD_TREE_INVALID_SECRET);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 2) == THRESHOLD_TREE_INVALID_SECRET);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 3) == THRESHOLD_TREE_INVALID_SECRET);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 4) == THRESHOLD_TREE_INVALID_SECRET);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 5) == THRESHOLD_TREE_INVALID_SECRET);
+          REQUIRE(test_secret_reconstruction(tree_ctx, parties, 6) == THRESHOLD_TREE_INVALID_SECRET);
+          
+        }
+      }
+    }
+
+    { // group verification
+
+      threshold_tree_clear_values_subtree_impl(tree_ctx->root, 0x01);
+      print_threshold_tree(tree_ctx, "Cleared Secrets:", "\n");
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+      threshold_tree_group_point_t tmp_group_el;
+      memcpy(tmp_group_el, level2[11]->group_share, sizeof(threshold_tree_group_point_t));
+
+      memset(level2[11]->group_share, 0, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level2[11]->group_share, level2[10]->group_share, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level2[10]->group_share, tmp_group_el, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level2[10]->group_share, level2[11]->group_share, sizeof(threshold_tree_group_point_t));
+      memcpy(level2[11]->group_share, tmp_group_el, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+      memcpy(tmp_group_el, level1[2]->group_polynom_coeffs[1], sizeof(threshold_tree_group_point_t));
+
+      memset(level1[2]->group_polynom_coeffs[1], 0, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level1[2]->group_polynom_coeffs[1], level1[2]->group_polynom_coeffs[0], sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level1[2]->group_polynom_coeffs[0], tmp_group_el, sizeof(threshold_tree_group_point_t));
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_INVALID_SHARE);
+
+      memcpy(level1[2]->group_polynom_coeffs[0], level1[2]->group_polynom_coeffs[1], sizeof(threshold_tree_group_point_t));
+      memcpy(level1[2]->group_polynom_coeffs[1], tmp_group_el, sizeof(threshold_tree_group_point_t));
+
+      REQUIRE(threshold_tree_verify_group_sharing(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    }
+  }
+  { // Authorization and reconstruction
+
+    threshold_tree_party_t parties[14];
+  
+    parties[0] = root;
+    
+    parties[1] = level1[0];
+    parties[2] = level1[0];
+    parties[3] = level1[1];
+    parties[4] = level1[2];
+
+    parties[5] = level2[0];
+    parties[6] = level2[1];
+    parties[7] = level2[0];
+    parties[8] = level2[1];
+    parties[9] = level2[4];
+    parties[10] = level2[5];
+    parties[11] = level2[8];
+    parties[12] = level2[9];
+    parties[13] = root;
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 0) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 1) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 2) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+    
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, parties, 3) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[1], 3) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[2], 2) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+    
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[3], 2) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[3], 3) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_UNAUTHORIZED_TREE);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[3], 4) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[3], 6) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[7], 5) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[7], 6) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+
+    REQUIRE(threshold_tree_set_authorized_subtree_by_parties(tree_ctx, &parties[7], 7) == THRESHOLD_TREE_SUCCESS);
+    REQUIRE(threshold_tree_is_tree_authorized(tree_ctx) == THRESHOLD_TREE_SUCCESS);
+  }
 
   threshold_tree_ctx_free(tree_ctx);
+}
 
+void test_random_tree()
+{
   threshold_tree_ctx_t *random_tree_ctx = threshold_tree_ctx_new();
 
   unsigned int seed = time(0);
@@ -527,4 +719,13 @@ int main() {
   print_threshold_tree(random_tree_ctx, "Random Tree:", "\n");
 
   threshold_tree_ctx_free(random_tree_ctx);
+}
+
+// TODO: Add tests for get_nodes by ids
+
+int main() {
+
+  test_one_level_2o3_tree();
+
+  test_bakkt_tree();
 }

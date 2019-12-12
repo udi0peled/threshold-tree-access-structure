@@ -68,8 +68,6 @@ static threshold_tree_status from_secp256k1_algebra_status(secp256k1_algebra_sta
 
 // ---------------------------------------- Tree Structure ----------------------------------------
 
-#pragma region
-
 threshold_tree_ctx_t *threshold_tree_ctx_new()
 {
     threshold_tree_ctx_t *tree_ctx = (threshold_tree_ctx_t *) malloc(sizeof(threshold_tree_ctx_t));
@@ -151,7 +149,7 @@ static uint64_t threshold_tree_get_nodes_by_ids_impl(const threshold_tree_node_t
 
 threshold_tree_status threshold_tree_get_parties_by_ids(const threshold_tree_ctx_t *tree_ctx, const uint64_t *ids, uint64_t num_ids, threshold_tree_party_t *parties, uint64_t *count_found)
 {
-    if (!tree_ctx || !ids) return THRESHOLD_TREE_INVALID_PARAMETER;
+    if (!tree_ctx || !ids || num_ids == 0) return THRESHOLD_TREE_INVALID_PARAMETER;
     
     if (parties) for (uint64_t i = 0; i < num_ids; ++i) parties[i] = NULL;
         
@@ -165,10 +163,10 @@ threshold_tree_status threshold_tree_get_parties_by_ids(const threshold_tree_ctx
         return THRESHOLD_TREE_MISSING_ID;
 }
 
-threshold_tree_status threshold_tree_get_single_party_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_party_t *player)
+threshold_tree_status threshold_tree_get_single_party_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_party_t *party)
 {
     uint64_t id_arr[1] = {id};
-    return threshold_tree_get_parties_by_ids(tree_ctx, id_arr, 1, player, NULL);
+    return threshold_tree_get_parties_by_ids(tree_ctx, id_arr, 1, party, NULL);
 }
 
 /* clear flags LSB(0) = secrets, LSB(1) = group_shares, LSB(2) = group_poly_coeffs, LSB(3) = authorized_nodes */
@@ -273,6 +271,98 @@ threshold_tree_status threshold_tree_is_complete_structure(threshold_tree_ctx_t 
     return THRESHOLD_TREE_SUCCESS;
 }
 
+static threshold_tree_status threshold_tree_duplicate_tree_structure_subtree_impl(threshold_tree_node_t *subtree, threshold_tree_ctx_t *new_tree_ctx, threshold_tree_node_t *new_subtree)
+{
+    if (!subtree) return THRESHOLD_TREE_UNKNOWN_ERROR;
+
+    threshold_tree_status ret_status;
+    threshold_tree_node_t *new_child;
+
+    for (uint8_t i = 0; i < subtree->num_shares; ++i)
+    {
+        if (subtree->children[i])
+        {
+            ret_status = threshold_tree_add_new_child(new_tree_ctx, new_subtree, i,subtree->children[i]->id, subtree->children[i]->num_shares, subtree->children[i]->threshold, &new_child);
+            if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
+
+            ret_status = threshold_tree_duplicate_tree_structure_subtree_impl(subtree->children[i], new_tree_ctx, new_child);
+            if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
+        }
+        else // null child
+        {
+            new_subtree->children[i] = NULL;
+        }
+    }
+
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_duplicate_tree_structure(threshold_tree_party_t root_party, threshold_tree_ctx_t **new_tree_ctx)
+{
+    if (!new_tree_ctx) return THRESHOLD_TREE_INVALID_PARAMETER;
+
+    *new_tree_ctx = threshold_tree_ctx_new();
+    if (!new_tree_ctx) return THRESHOLD_TREE_OUT_OF_MEMORY;
+    
+    if (!root_party) return THRESHOLD_TREE_SUCCESS;
+
+    threshold_tree_status ret_status = threshold_tree_add_new_child(*new_tree_ctx, NULL, 0, root_party->id, root_party->num_shares, root_party->threshold, NULL);
+    if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+
+    ret_status = threshold_tree_duplicate_tree_structure_subtree_impl(root_party, *new_tree_ctx, (*new_tree_ctx)->root);
+    if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
+
+    return THRESHOLD_TREE_SUCCESS;
+
+cleanup:
+    threshold_tree_ctx_free(*new_tree_ctx);
+    return ret_status;
+}
+
+// ---------------------------------------- Getters and Serializers ----------------------------------------
+
+threshold_tree_status threshold_tree_get_party_secret(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_scalar_t secret)
+{
+    if (!tree_ctx || !party || !secret) return THRESHOLD_TREE_INVALID_PARAMETER;
+    memcpy(secret, party->secret_share, sizeof(threshold_tree_scalar_t));
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_get_party_id(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint64_t *id)
+{
+    if (!tree_ctx || !party || !id) return THRESHOLD_TREE_INVALID_PARAMETER;
+    *id = party->id;
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_get_party_num_shares(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint8_t *num_shares)
+{
+    if (!tree_ctx || !party || !num_shares) return THRESHOLD_TREE_INVALID_PARAMETER;
+    *num_shares = party->num_shares;
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_get_party_threshold(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint8_t *threshold)
+{
+    if (!tree_ctx || !party || !threshold) return THRESHOLD_TREE_INVALID_PARAMETER;
+    *threshold = party->threshold;
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_get_party_lagrange_coeff(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_scalar_t lagrange_coeff)
+{
+    if (!tree_ctx || !party || !lagrange_coeff) return THRESHOLD_TREE_INVALID_PARAMETER;
+    memcpy(lagrange_coeff, party->lagrange_coeff, sizeof(threshold_tree_scalar_t));
+    return THRESHOLD_TREE_SUCCESS;
+}
+
+threshold_tree_status threshold_tree_get_party_group_secret(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_group_point_t group_secret)
+{
+    if (!tree_ctx || !party || !group_secret) return THRESHOLD_TREE_INVALID_PARAMETER;
+    memcpy(group_secret, party->group_share, sizeof(threshold_tree_group_point_t));
+    return THRESHOLD_TREE_SUCCESS;
+}
+
 static void threshold_tree_serialize_group_points_subtree_impl(threshold_tree_node_t *subtree, threshold_tree_group_point_t *points)
 {
     if (!subtree) return ;
@@ -295,9 +385,14 @@ threshold_tree_status threshold_tree_serialize_group_points(threshold_tree_ctx_t
 
     if (!points || !num_points) return THRESHOLD_TREE_INVALID_PARAMETER;
 
-    *num_points = tree_ctx->node_count + tree_ctx->sum_thresholds;
+    uint64_t req_num_points = tree_ctx->node_count + tree_ctx->sum_thresholds;
+    if (*num_points < req_num_points)
+    {
+        *num_points = req_num_points;
+        return THRESHOLD_TREE_INSUFFICIENT_BUFFER;
+    }
 
-    *points = (threshold_tree_group_point_t *) calloc(*num_points, sizeof(threshold_tree_group_point_t));
+    *points = (threshold_tree_group_point_t *) calloc(req_num_points, sizeof(threshold_tree_group_point_t));
     if (!*points) return THRESHOLD_TREE_OUT_OF_MEMORY;
 
     threshold_tree_serialize_group_points_subtree_impl(tree_ctx->root, *points);
@@ -305,15 +400,34 @@ threshold_tree_status threshold_tree_serialize_group_points(threshold_tree_ctx_t
     return THRESHOLD_TREE_SUCCESS;
 }
 
-static threshold_tree_status threshold_tree_deserialize_group_points_subtree_impl(threshold_tree_node_t *subtree, threshold_tree_group_point_t *points);
+static void threshold_tree_deserialize_group_points_subtree_impl(threshold_tree_node_t *subtree, threshold_tree_group_point_t *points)
+{
+    if (!subtree) return ;
 
-threshold_tree_status threshold_tree_deserialize_group_points(threshold_tree_ctx_t *tree_ctx, threshold_tree_group_point_t *points);
+    memcpy(subtree->group_share, *points, sizeof(threshold_tree_group_point_t));
+    points++;
 
-#pragma endregion
+    memcpy(*subtree->group_polynom_coeffs, *points, subtree->threshold * sizeof(threshold_tree_group_point_t));
+    points += subtree->threshold;
+
+    for (uint8_t i = 0; i < subtree->num_shares; ++i) {
+        threshold_tree_serialize_group_points_subtree_impl(subtree->children[i], points);
+    }
+}
+
+threshold_tree_status threshold_tree_deserialize_group_points(threshold_tree_ctx_t *tree_ctx, threshold_tree_group_point_t *points, uint64_t num_points)
+{
+    threshold_tree_status ret_status = threshold_tree_is_complete_structure(tree_ctx);
+    if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
+
+    if (!points || num_points != tree_ctx->node_count + tree_ctx->sum_thresholds) return THRESHOLD_TREE_INVALID_PARAMETER;
+
+    threshold_tree_deserialize_group_points_subtree_impl(tree_ctx->root, points);
+
+    return THRESHOLD_TREE_SUCCESS;
+}
 
 // ---------------------------------------- Verifiable Secret Sharing ----------------------------------------
-
-#pragma region
 
 static threshold_tree_status threshold_tree_share_secret_subtree_impl(threshold_tree_node_t *subtree)
 {
@@ -419,7 +533,6 @@ threshold_tree_status threshold_tree_verify_group_sharing(threshold_tree_ctx_t *
     return threshold_tree_verify_subtree_group_sharing_impl(tree_ctx->root);
 }
 
-#pragma endregion
 
 // ---------------------------------------- Authorized Subtree ----------------------------------------
 
@@ -447,6 +560,8 @@ threshold_tree_status threshold_tree_set_authorized_subtree_by_parties(threshold
 
     threshold_tree_status ret_status = threshold_tree_is_complete_structure(tree_ctx);
     if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
+
+    threshold_tree_clear_values_subtree_impl(tree_ctx->root, 0x08);
 
     for (uint64_t i = 0; i < num_parties; ++i)
     {
@@ -536,48 +651,4 @@ threshold_tree_status threshold_tree_compute_lagrange_coeffs_at_authorized_subtr
 cleanup:
     secp256k1_algebra_ctx_free(algebra_ctx);
     return ret_status;
-}
-
-// ---------------------------------------- Getters ----------------------------------------
-
-threshold_tree_status threshold_tree_get_party_secret(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_scalar_t secret)
-{
-    if (!tree_ctx || !party || !secret) return THRESHOLD_TREE_INVALID_PARAMETER;
-    memcpy(secret, party->secret_share, sizeof(threshold_tree_scalar_t));
-    return THRESHOLD_TREE_SUCCESS;
-}
-
-threshold_tree_status threshold_tree_get_party_id(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint64_t *id)
-{
-    if (!tree_ctx || !party || !id) return THRESHOLD_TREE_INVALID_PARAMETER;
-    *id = party->id;
-    return THRESHOLD_TREE_SUCCESS;
-}
-
-threshold_tree_status threshold_tree_get_party_num_shares(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint8_t *num_shares)
-{
-    if (!tree_ctx || !party || !num_shares) return THRESHOLD_TREE_INVALID_PARAMETER;
-    *num_shares = party->num_shares;
-    return THRESHOLD_TREE_SUCCESS;
-}
-
-threshold_tree_status threshold_tree_get_party_threshold(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, uint8_t *threshold)
-{
-    if (!tree_ctx || !party || !threshold) return THRESHOLD_TREE_INVALID_PARAMETER;
-    *threshold = party->threshold;
-    return THRESHOLD_TREE_SUCCESS;
-}
-
-threshold_tree_status threshold_tree_get_party_lagrange_coeff(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_scalar_t lagrange_coeff)
-{
-    if (!tree_ctx || !party || !lagrange_coeff) return THRESHOLD_TREE_INVALID_PARAMETER;
-    memcpy(lagrange_coeff, party->lagrange_coeff, sizeof(threshold_tree_scalar_t));
-    return THRESHOLD_TREE_SUCCESS;
-}
-
-threshold_tree_status threshold_tree_get_party_group_secret(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_group_point_t group_secret)
-{
-    if (!tree_ctx || !party || !group_secret) return THRESHOLD_TREE_INVALID_PARAMETER;
-    memcpy(group_secret, party->group_share, sizeof(threshold_tree_group_point_t));
-    return THRESHOLD_TREE_SUCCESS;
 }
