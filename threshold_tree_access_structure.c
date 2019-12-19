@@ -34,7 +34,7 @@ struct threshold_tree_ctx
     uint64_t num_missing_leaves;
 };
 
-// ---------------------------------------- Error Conversion ----------------------------------------
+// ---------- Error Conversion ------------------------------------------------------------------------------------------------------------------------
 
 static threshold_tree_status from_verifiable_secret_sharing_status(verifiable_secret_sharing_status status)
 {
@@ -66,7 +66,7 @@ static threshold_tree_status from_secp256k1_algebra_status(secp256k1_algebra_sta
     }
 }
 
-// ---------------------------------------- Tree Structure ----------------------------------------
+// ---------- Tree Structure ------------------------------------------------------------------------------------------------------------------------
 
 threshold_tree_ctx_t *threshold_tree_ctx_new()
 {
@@ -77,7 +77,7 @@ threshold_tree_ctx_t *threshold_tree_ctx_new()
     tree_ctx->root = NULL;
     tree_ctx->node_count = 0;
     tree_ctx->sum_thresholds = 0;
-    tree_ctx->num_missing_leaves = 1; // root is missing
+    tree_ctx->num_missing_leaves = 1;       // root is missing
 
     return tree_ctx;
 }
@@ -123,53 +123,10 @@ void threshold_tree_ctx_free(threshold_tree_ctx_t *tree_ctx)
     free(tree_ctx);
 }
 
-/* Find nodes with given ids in tree. Assumes tree ids are unique. Given ids can repeat. If found_nodes is null, just counts  */
-static uint64_t threshold_tree_get_nodes_by_ids_impl(const threshold_tree_node_t *subtree, const uint64_t *ids, uint64_t num_ids, threshold_tree_node_t **found_nodes)
-{
-    if (!subtree) return 0;
-
-    uint64_t count_found = 0;
-
-    for (uint64_t i = 0; i < num_ids; ++i)
-    {
-        if (subtree->id == ids[i])
-        {
-            if (found_nodes) found_nodes[i] = (threshold_tree_node_t *) subtree;
-            ++count_found;
-        }
-    }
-
-    for (uint8_t i = 0; i < subtree->num_shares; ++i)
-    {
-        count_found += threshold_tree_get_nodes_by_ids_impl(subtree->children[i], ids, num_ids, found_nodes);
-    }
-
-    return count_found;
-}
-
-threshold_tree_status threshold_tree_get_parties_by_ids(const threshold_tree_ctx_t *tree_ctx, const uint64_t *ids, uint64_t num_ids, threshold_tree_party_t *parties, uint64_t *count_found)
-{
-    if (!tree_ctx || !ids || num_ids == 0) return THRESHOLD_TREE_INVALID_PARAMETER;
-    
-    if (parties) for (uint64_t i = 0; i < num_ids; ++i) parties[i] = NULL;
-        
-    uint64_t temp_num_found = threshold_tree_get_nodes_by_ids_impl(tree_ctx->root, ids, num_ids, parties);
-
-    if (count_found) *count_found = temp_num_found;
-
-    if (temp_num_found == num_ids)
-        return THRESHOLD_TREE_SUCCESS;
-    else
-        return THRESHOLD_TREE_MISSING_ID;
-}
-
-threshold_tree_status threshold_tree_get_single_party_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_party_t *party)
-{
-    uint64_t id_arr[1] = {id};
-    return threshold_tree_get_parties_by_ids(tree_ctx, id_arr, 1, party, NULL);
-}
-
-/* clear flags LSB(0) = secrets, LSB(1) = group_shares, LSB(2) = group_poly_coeffs, LSB(3) = authorized_nodes */
+/*
+    Clears values in the whole tree according to flags bits turned on:
+    LSB(0) = secrets, LSB(1) = group_shares, LSB(2) = group_poly_coeffs, LSB(3) = authorized_nodes.
+*/
 static void threshold_tree_clear_values_subtree_impl(threshold_tree_node_t *subtree, uint8_t clear_flags)
 {
     if (!subtree) return ;
@@ -196,10 +153,9 @@ static void threshold_tree_clear_values_subtree_impl(threshold_tree_node_t *subt
     }
 }
 
-threshold_tree_status threshold_tree_add_new_child(threshold_tree_ctx_t *tree_ctx, threshold_tree_party_t parent, uint8_t child_index, uint64_t child_id, uint8_t child_num_shares, uint8_t child_threshold, threshold_tree_party_t *new_child)
+threshold_tree_status threshold_tree_set_new_child(threshold_tree_ctx_t *tree_ctx, threshold_tree_party_t parent, uint8_t child_index, uint64_t child_id, uint8_t child_num_shares, uint8_t child_threshold, threshold_tree_party_t *new_child)
 {
     threshold_tree_status ret_status = THRESHOLD_TREE_OUT_OF_MEMORY;
-    
 
     if (!tree_ctx
         || ((child_threshold == 0) && (child_num_shares > 0) ) 
@@ -282,7 +238,7 @@ static threshold_tree_status threshold_tree_duplicate_tree_structure_subtree_imp
     {
         if (subtree->children[i])
         {
-            ret_status = threshold_tree_add_new_child(new_tree_ctx, new_subtree, i,subtree->children[i]->id, subtree->children[i]->num_shares, subtree->children[i]->threshold, &new_child);
+            ret_status = threshold_tree_set_new_child(new_tree_ctx, new_subtree, i,subtree->children[i]->id, subtree->children[i]->num_shares, subtree->children[i]->threshold, &new_child);
             if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
 
             ret_status = threshold_tree_duplicate_tree_structure_subtree_impl(subtree->children[i], new_tree_ctx, new_child);
@@ -306,7 +262,7 @@ threshold_tree_status threshold_tree_duplicate_tree_structure(threshold_tree_par
     
     if (!root_party) return THRESHOLD_TREE_SUCCESS;
 
-    threshold_tree_status ret_status = threshold_tree_add_new_child(*new_tree_ctx, NULL, 0, root_party->id, root_party->num_shares, root_party->threshold, NULL);
+    threshold_tree_status ret_status = threshold_tree_set_new_child(*new_tree_ctx, NULL, 0, root_party->id, root_party->num_shares, root_party->threshold, NULL);
     if (ret_status != THRESHOLD_TREE_SUCCESS) goto cleanup;
 
     ret_status = threshold_tree_duplicate_tree_structure_subtree_impl(root_party, *new_tree_ctx, (*new_tree_ctx)->root);
@@ -319,7 +275,57 @@ cleanup:
     return ret_status;
 }
 
-// ---------------------------------------- Getters and Serializers ----------------------------------------
+// ---------- Getters and Serializers ------------------------------------------------------------------------------------------------------------------------
+
+/*  
+    Find nodes with given ids in tree and returns found count.
+    Given ids can repeat, but assumes tree ids are unique.
+    If found_nodes is non-null, populates found nodes in order of ids.
+*/
+static uint64_t threshold_tree_get_nodes_by_ids_impl(const threshold_tree_node_t *subtree, const uint64_t *ids, uint64_t num_ids, threshold_tree_node_t **found_nodes)
+{
+    if (!subtree) return 0;
+
+    uint64_t count_found = 0;
+
+    for (uint64_t i = 0; i < num_ids; ++i)
+    {
+        if (subtree->id == ids[i])
+        {
+            if (found_nodes) found_nodes[i] = (threshold_tree_node_t *) subtree;
+            ++count_found;
+        }
+    }
+
+    for (uint8_t i = 0; i < subtree->num_shares; ++i)
+    {
+        count_found += threshold_tree_get_nodes_by_ids_impl(subtree->children[i], ids, num_ids, found_nodes);
+    }
+
+    return count_found;
+}
+
+threshold_tree_status threshold_tree_get_parties_by_ids(const threshold_tree_ctx_t *tree_ctx, const uint64_t *ids, uint64_t num_ids, threshold_tree_party_t *parties, uint64_t *count_found)
+{
+    if (!tree_ctx || !ids || num_ids == 0) return THRESHOLD_TREE_INVALID_PARAMETER;
+    
+    if (parties) for (uint64_t i = 0; i < num_ids; ++i) parties[i] = NULL;
+        
+    uint64_t temp_num_found = threshold_tree_get_nodes_by_ids_impl(tree_ctx->root, ids, num_ids, parties);
+
+    if (count_found) *count_found = temp_num_found;
+
+    if (temp_num_found == num_ids)
+        return THRESHOLD_TREE_SUCCESS;
+    else
+        return THRESHOLD_TREE_MISSING_ID;
+}
+
+threshold_tree_status threshold_tree_get_single_party_by_id(const threshold_tree_ctx_t *tree_ctx, uint64_t id, threshold_tree_party_t *party)
+{
+    uint64_t id_arr[1] = {id};
+    return threshold_tree_get_parties_by_ids(tree_ctx, id_arr, 1, party, NULL);
+}
 
 threshold_tree_status threshold_tree_get_party_secret(const threshold_tree_ctx_t *tree_ctx, const  threshold_tree_party_t party, threshold_tree_scalar_t secret)
 {
@@ -378,24 +384,21 @@ static void threshold_tree_serialize_group_points_subtree_impl(threshold_tree_no
     }
 }
 
-threshold_tree_status threshold_tree_serialize_group_points(threshold_tree_ctx_t *tree_ctx, threshold_tree_group_point_t **points, uint64_t *num_points)
+threshold_tree_status threshold_tree_serialize_group_points(threshold_tree_ctx_t *tree_ctx, threshold_tree_group_point_t *points, uint64_t *num_points)
 {
     threshold_tree_status ret_status = threshold_tree_is_complete_structure(tree_ctx);
     if (ret_status != THRESHOLD_TREE_SUCCESS) return ret_status;
 
-    if (!points || !num_points) return THRESHOLD_TREE_INVALID_PARAMETER;
+    if (!num_points) return THRESHOLD_TREE_INVALID_PARAMETER;
 
     uint64_t req_num_points = tree_ctx->node_count + tree_ctx->sum_thresholds;
-    if (*num_points < req_num_points)
+    if (!points || *num_points < req_num_points)
     {
         *num_points = req_num_points;
         return THRESHOLD_TREE_INSUFFICIENT_BUFFER;
     }
 
-    *points = (threshold_tree_group_point_t *) calloc(req_num_points, sizeof(threshold_tree_group_point_t));
-    if (!*points) return THRESHOLD_TREE_OUT_OF_MEMORY;
-
-    threshold_tree_serialize_group_points_subtree_impl(tree_ctx->root, *points);
+    threshold_tree_serialize_group_points_subtree_impl(tree_ctx->root, points);
 
     return THRESHOLD_TREE_SUCCESS;
 }
@@ -427,8 +430,12 @@ threshold_tree_status threshold_tree_deserialize_group_points(threshold_tree_ctx
     return THRESHOLD_TREE_SUCCESS;
 }
 
-// ---------------------------------------- Verifiable Secret Sharing ----------------------------------------
+// ---------- Verifiable Secret Sharing ------------------------------------------------------------------------------------------------------------------------
 
+/*
+    Splits the secret share at subtree node to its children using Feldman Verification of Shamir Secret Sharing.
+    Continues recursively at each child.
+*/
 static threshold_tree_status threshold_tree_share_secret_subtree_impl(threshold_tree_node_t *subtree)
 {
     if (!subtree->num_shares) return THRESHOLD_TREE_SUCCESS;
@@ -499,13 +506,14 @@ threshold_tree_status threshold_tree_share_secret(threshold_tree_ctx_t *tree_ctx
 
     ret_status = threshold_tree_share_secret_subtree_impl(tree_ctx->root);
 
-    if (ret_status != THRESHOLD_TREE_SUCCESS) threshold_tree_clear_values_subtree_impl(tree_ctx->root, 0x01);
+    if (ret_status != THRESHOLD_TREE_SUCCESS) threshold_tree_clear_values_subtree_impl(tree_ctx->root, 0x07);
 
     return ret_status;
 }
 
-/* Verifies (in the group exponenet) shares of subtree children were generated correctly by polynomial */
-
+/*
+    Feldman verification subtree node group polynomial coefficients correctly generated children's group shares.
+*/
 static threshold_tree_status threshold_tree_verify_subtree_group_sharing_impl(threshold_tree_node_t *subtree)
 {
     if (!subtree->num_shares) return THRESHOLD_TREE_SUCCESS;
@@ -533,9 +541,13 @@ threshold_tree_status threshold_tree_verify_group_sharing(threshold_tree_ctx_t *
     return threshold_tree_verify_subtree_group_sharing_impl(tree_ctx->root);
 }
 
+// ---------- Authorized Subtree ------------------------------------------------------------------------------------------------------------------------
 
-// ---------------------------------------- Authorized Subtree ----------------------------------------
-
+/*
+    If current node was already authorized, do nothing.
+    Otherwise current node is authorized and adds 1 to parent's count (unless current is root).
+    Continues recursively updwards to parent if parent's threshold is passed.
+*/
 static threshold_tree_status threshold_tree_authorize_parents_from_marked_node_impl(threshold_tree_node_t *curr_node)
 {
     if (!curr_node) return THRESHOLD_TREE_NULL_POINTER;
@@ -585,6 +597,7 @@ threshold_tree_status threshold_tree_is_tree_authorized(threshold_tree_ctx_t *tr
     
     return THRESHOLD_TREE_SUCCESS;
 }
+
 
 static threshold_tree_status threshold_tree_compute_children_lagrange_coeffs_impl(threshold_tree_node_t *subtree, secp256k1_algebra_ctx_t *algebra_ctx)
 {

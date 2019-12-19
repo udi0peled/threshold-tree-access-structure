@@ -613,3 +613,263 @@ void verifiable_secret_sharing_free_shares(verifiable_secret_sharing_t *shares)
         free(shares);
     }
 }
+
+
+// -------------------- UDI ----------------------------------------------------------------------------------------------------
+
+static verifiable_secret_sharing_status create_shares_at(const BIGNUM *secret, const BIGNUM *split_at, uint8_t t, uint8_t n, const BIGNUM **mat, verifiable_secret_sharing_t *shares, BN_CTX *ctx, const BIGNUM *prime)
+{
+    verifiable_secret_sharing_status ret = VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY;
+    BIGNUM *tmp = NULL;
+    BIGNUM *powers_split_at = NULL;         // CHANGE
+    uint8_t *coefficient = NULL;
+    uint32_t coefficient_size = 0;
+    BIGNUM *share = NULL;
+    BIGNUM **polynom = (BIGNUM**)calloc(t, sizeof(BIGNUM*));
+
+    if (!polynom)
+        goto cleanup;
+    polynom[0] = (BIGNUM*)secret;
+
+    BN_CTX_start(ctx);
+
+    tmp = BN_CTX_get(ctx);                  // CHANGE
+    if (!tmp) goto cleanup;                 // CHANGE
+    powers_split_at = BN_CTX_get(ctx);      // CHANGE
+    if (!powers_split_at) goto cleanup;     // CHANGE
+    BN_one(powers_split_at);                // CHANGE
+
+    // define the polynom
+    for (size_t i = 1; i < t; ++i)
+    {
+        polynom[i] = BN_CTX_get(ctx);
+
+        if (!polynom[i])
+            goto cleanup;
+        
+        do
+        {
+            if (!BN_rand_range(polynom[i], prime))
+                goto cleanup;
+        } while (BN_is_zero(polynom[i])); // generating random zero is most likely a bug in the RNG (RDRAND instruction) so we ignore this value
+        
+        if (!BN_mod_mul(powers_split_at, powers_split_at, split_at, prime, ctx)) goto cleanup;                  // CHANGE
+        if (!BN_mod_mul(tmp, powers_split_at, polynom[i], prime, ctx)) goto cleanup;                            // CHANGE
+        if (!BN_mod_sub(polynom[0], polynom[0], tmp, prime, ctx)) goto cleanup;                                 // CHANGE
+    }
+
+    shares->secp256k1 = secp256k1_algebra_ctx_new();
+    if (!shares->secp256k1)
+        goto cleanup;
+    shares->num_shares = n;
+    shares->threshold = t;
+    shares->shares = calloc(n, sizeof(shamir_secret_sharing_scalar_t));
+    if (!shares->shares)
+        goto cleanup;
+    shares->proofs = calloc(n, sizeof(secp256k1_point_t));
+    if (!shares->proofs)
+        goto cleanup;
+    shares->coefficient_proofs = calloc(t, sizeof(secp256k1_point_t));
+    if (!shares->coefficient_proofs)
+        goto cleanup;
+    
+    for (size_t i = 0; i < t; ++i)
+    {
+        secp256k1_algebra_status status;
+        uint32_t size = BN_num_bytes(polynom[i]);
+        if (size > coefficient_size)
+        {
+            coefficient = realloc(coefficient, size);
+            coefficient_size = size;
+        }
+        if (!coefficient)
+            goto cleanup;
+        if (BN_bn2bin(polynom[i], coefficient) <= 0)
+            goto cleanup;
+        status = secp256k1_algebra_generate_proof_for_data(shares->secp256k1, coefficient, size, &shares->coefficient_proofs[i]);
+        if (status != SECP256K1_ALGEBRA_SUCCESS)
+        {
+            ret = (status == SECP256K1_ALGEBRA_OUT_OF_MEMORY) ? VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY : VERIFIABLE_SECRET_SHARING_UNKNOWN_ERROR;
+            goto cleanup;
+        }
+    }
+    memset(coefficient, 0, coefficient_size);
+
+    //tmp = BN_CTX_get(ctx);              // CHANGE: initialized before
+    //if (!tmp)
+    //    goto cleanup;
+
+    share = BN_CTX_get(ctx);
+    if (!share)
+        goto cleanup;
+
+
+    // multiply the access matrix and the coefficient vector to get the sharws
+    for (size_t i = 0; i < n; ++i)
+    {
+        secp256k1_algebra_status status;
+        
+        if (!share)
+            goto cleanup;
+        BN_zero_ex(share);
+
+        for (size_t j = 0; j < t; j++)
+        {
+            if (!BN_mod_mul(tmp, mat[i * t + j], polynom[j], prime, ctx))
+                goto cleanup;
+            if (!BN_mod_add_quick(share, share, tmp, prime))
+                goto cleanup;
+        }
+        if (BN_bn2binpad(share, shares->shares[i], sizeof(shamir_secret_sharing_scalar_t)) <= 0)
+            goto cleanup;
+        status = secp256k1_algebra_generate_proof_for_data(shares->secp256k1, shares->shares[i], sizeof(shamir_secret_sharing_scalar_t), &shares->proofs[i]);
+        if (status != SECP256K1_ALGEBRA_SUCCESS)
+        {
+            ret = (status == SECP256K1_ALGEBRA_OUT_OF_MEMORY) ? VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY : VERIFIABLE_SECRET_SHARING_UNKNOWN_ERROR;
+            goto cleanup;
+        }
+    }
+    ret = VERIFIABLE_SECRET_SHARING_SUCCESS;
+
+cleanup:
+    BN_CTX_end(ctx);
+    free(polynom);
+    free(coefficient);
+    return ret;
+}
+
+static verifiable_secret_sharing_status verifiable_secret_sharing_split_at_id_impl(const uint8_t *secret, uint32_t secret_len, const BIGNUM *split_at, uint8_t t, uint8_t n, BIGNUM **access_mat, 
+    verifiable_secret_sharing_t **shares, uint64_t *ids, BN_CTX *ctx)
+{
+    BIGNUM *bn_secret = NULL;
+    BIGNUM *bn_prime = NULL;
+    verifiable_secret_sharing_status ret = VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY;
+    verifiable_secret_sharing_t *shares_local = NULL;
+
+    shares_local = (verifiable_secret_sharing_t*)calloc(1, sizeof(verifiable_secret_sharing_t));
+    if (!shares_local)
+        return VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY;
+    if (!(bn_secret = BN_bin2bn(secret, secret_len, NULL)))
+        goto cleanup;
+    if (!(bn_prime = BN_bin2bn(SECP256K1_FIELD, SECP256K1_FIELD_SIZE, NULL)))
+        goto cleanup;
+    
+    BN_CTX_start(ctx);
+    assert(BN_is_prime_ex(bn_prime, 1000, ctx, NULL));
+    BN_set_flags(bn_prime, BN_FLG_CONSTTIME);
+
+    if (BN_cmp(bn_secret, bn_prime) >= 0)
+    {
+        ret = VERIFIABLE_SECRET_SHARING_INVALID_SECRET;
+        goto cleanup;
+    }
+
+    for (size_t i = 0; i < t*n; ++i)
+        BN_mod(access_mat[i], access_mat[i], bn_prime, ctx);
+    
+    shares_local->ids = ids;
+    
+    // CHANGE: The next function call is the only change here
+    if (create_shares_at(bn_secret, split_at, t, n, (const BIGNUM**)access_mat, shares_local, ctx, bn_prime) == 0)
+    {
+        *shares = shares_local;
+        ret = VERIFIABLE_SECRET_SHARING_SUCCESS;
+    }
+
+cleanup:
+    if (bn_prime)
+        BN_free(bn_prime);
+    if (bn_secret)
+        BN_clear_free(bn_secret);
+    BN_CTX_end(ctx);
+    if (ret != VERIFIABLE_SECRET_SHARING_SUCCESS)
+        verifiable_secret_sharing_free_shares(shares_local);
+
+    return ret;
+}
+
+verifiable_secret_sharing_status verifiable_secret_sharing_split_at_id_with_custom_ids(const uint8_t *secret, uint32_t secret_len, uint64_t split_id, uint8_t t, uint8_t n, uint64_t *ids, verifiable_secret_sharing_t **shares)
+{
+    BN_CTX *ctx = NULL;
+    BIGNUM **mat = NULL;
+    BIGNUM *one = NULL;
+    uint64_t *local_ids = NULL;
+    verifiable_secret_sharing_status ret = VERIFIABLE_SECRET_SHARING_OUT_OF_MEMORY;
+    
+    if (!secret || !secret_len || !shares || t < 1 || t > n || !ids)
+        return VERIFIABLE_SECRET_SHARING_INVALID_PARAMETER;
+
+    ctx = BN_CTX_new();
+    if (!ctx)
+        goto cleanup;
+    BN_CTX_start(ctx);
+    
+    mat = (BIGNUM**)calloc(n * t, sizeof(BIGNUM*));
+    if (!mat)
+        goto cleanup;   
+    one = BN_CTX_get(ctx);
+    if (!one)
+        goto cleanup;
+    BN_one(one);
+
+    local_ids = (uint64_t*)calloc(n, sizeof(uint64_t));
+    if (!local_ids)
+        goto cleanup;
+    memcpy(local_ids, ids, n * sizeof(uint64_t));
+
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (!local_ids[i])
+        {
+            ret = VERIFIABLE_SECRET_SHARING_INVALID_SHARE_ID;
+            goto cleanup;
+        }
+        for (size_t j = i + 1; j < n; ++j)
+        {
+            if (local_ids[i] == local_ids[j])
+            {
+                ret = VERIFIABLE_SECRET_SHARING_INVALID_SHARE_ID;
+                goto cleanup;
+            }
+        }
+    }
+    
+    for (size_t i = 0; i < n; ++i)
+    {
+        BIGNUM *prev = one;
+
+        // init first cal to one
+        mat[i * t] = one;
+        for (size_t j = 1; j < t; ++j)
+        {
+            BIGNUM *cur = BN_CTX_get(ctx);
+            if (!cur)
+                goto cleanup;
+            if (!BN_copy(cur, prev))
+                goto cleanup;
+            if (!BN_mul_word(cur, local_ids[i]))
+                goto cleanup;
+            mat[i * t + j] = cur;
+            prev = cur;
+        }
+    }
+
+    // CHANGE: Only next 4 lines are change from same function without split_id
+    BIGNUM *bn_split_at = BN_CTX_get(ctx);
+    if (!bn_split_at) goto cleanup;
+    if (!BN_set_word(bn_split_at, split_id)) goto cleanup;
+
+    ret = verifiable_secret_sharing_split_at_id_impl(secret, secret_len, bn_split_at, t, n, mat, shares, local_ids, ctx);       
+
+cleanup:
+    if (ctx)
+    {
+        BN_CTX_end(ctx);
+        BN_CTX_free(ctx);
+    }
+    if (mat)
+        free(mat);
+    if (ret != VERIFIABLE_SECRET_SHARING_SUCCESS)
+        free(local_ids);
+    return ret;
+}

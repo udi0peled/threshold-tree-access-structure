@@ -75,6 +75,12 @@ void verifiable_secret_sharing_free_shares(verifiable_secret_sharing_t *shares);
 
 // UDI: to support adding user in general t/n and threshold tree, need to implement secret sharing and verification under constraint (x,y) of shamir polynomial
 
+/*  
+    Splits the secret to n shares using shamir secret sharing, so any subset t of them can reconstruct the secret using user provided ids for the shares.
+    The secret is the value of the polynomial at split_id id.
+*/
+verifiable_secret_sharing_status verifiable_secret_sharing_split_at_id_with_custom_ids(const uint8_t *secret, uint32_t secret_len, uint64_t split_id, uint8_t t, uint8_t n, uint64_t *ids, verifiable_secret_sharing_t **shares);
+
 #ifdef __cplusplus
 }
 #endif //__cplusplus
